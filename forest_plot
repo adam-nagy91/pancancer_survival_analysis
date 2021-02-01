@@ -1,0 +1,254 @@
+# Required PACKAGES
+library(survival)
+library(survplot)
+library(forestplot)
+
+# ==== SURVIVAL FUNCTION ====
+bestcutoff <- function(datavector, clintable) {
+  breaks <- quantile(datavector, probs = seq(0.25, 0.75, by= 0.01))
+  cutoff.table <- t(sapply(breaks, function(z) cutoff(datavector = datavector, cutpoint = z, clintable = clintable)))
+  colnames(cutoff.table) <- c("cutoff", "pvalue")
+  #cutoff.table
+  cutoff.table[order(cutoff.table[, 2]), "cutoff"][1]
+}
+
+cutoff <- function(datavector, cutpoint, clintable) {
+  term <- cut(x = datavector, breaks = c(min(datavector), cutpoint, max(datavector)), labels = F, include.lowest = T)
+  cox <- summary(coxph(Surv(surv_time, surv_events) ~ term, data = clintable))
+  c(cutpoint, cox$sctest[3])
+}
+
+# ==== Forestplot input table ====
+forest_input = as.data.frame(matrix(nrow = 26, ncol = 5))
+colnames(forest_input) = c("Tumor", "p.value", "HR", "CI_Low", "CI_High")
+
+# ==== Reading files ====
+exp_files = list.files(path = getwd(), pattern = "mRNA_scaled_expression.txt", full.names = T, recursive = T)
+clin_file = list.files(path = getwd(), pattern = "PanCancer_clinical_table_all190708.txt", full.names = T, recursive = T)
+cancer_genes_file = list.files(path = getwd(), pattern = "BBA_surv_genes.txt", full.names = T, recursive = T)
+
+cancer_genes = read.table(cancer_genes_file, sep = "\t",  header = T, check.names = F)
+clinical = read.table(clin_file, sep = "\t", header = T, row.names = 1, check.names = F)
+
+# ==== The list of the main cancer hallmarks ====
+# 1-sustaining_proliferative_signaling (oncogenes)
+# 2-evading_growth_suppressors (tumor suppressors)
+# 3-inducing_angiogenesis
+# 4-genome_instability
+# 5-deregulation_of_cellular_energetics
+# 6-activating_invasion_metastasis
+# 7-resisting_cell_death
+# 8-enabling_replicative_immortality
+
+selected_hallmark = 6 # Selecting the hallmark
+
+if (selected_hallmark == 1){
+  hallmark = "Sustaining proliferative signaling"
+  hallmark_genes = unique(as.character(cancer_genes[which(cancer_genes$Hallmark_feature == "oncogenes"), 1]))
+  
+} else if (selected_hallmark == 2){
+  hallmark = "Evading growth suppressors"
+  hallmark_genes = unique(as.character(cancer_genes[which(cancer_genes$Hallmark_feature == "tumor_suppressor_genes"), 1]))
+  
+} else if (selected_hallmark == 3){
+  hallmark = "Inducing angiogenesis"
+  hallmark_genes = unique(as.character(cancer_genes[which(cancer_genes$Main_hallmark_feature == "inducing_angiogenesis"), 1]))
+  
+} else if (selected_hallmark == 4){
+  hallmark = "Genome instability"
+  hallmark_genes = unique(as.character(cancer_genes[which(cancer_genes$Main_hallmark_feature == "genome_instability"), 1]))
+  
+} else if (selected_hallmark == 5){
+  hallmark = "Deregulation of cellular energetics"
+  hallmark_genes = unique(as.character(cancer_genes[which(cancer_genes$Main_hallmark_feature == "deregulation_of_cellular_energetics"), 1]))
+  
+} else if (selected_hallmark == 6){
+  hallmark = "Activating invasion metastasis"
+  hallmark_genes = unique(as.character(cancer_genes[which(cancer_genes$Main_hallmark_feature %in% c("activating_invasion_metastasis", "activating_invasion_metastasis/cell_motility", "activating_invasion_metastasis/rho_family_ GTPases", "activating_invasion_metastasis/invasion")), 1]))
+  
+} else if (selected_hallmark == 7){
+  hallmark = "Resisting cell death"
+  hallmark_genes = unique(as.character(cancer_genes[which(cancer_genes$Main_hallmark_feature %in% c("resisting_cell_death/apoptotic_pathway_members", "resisting_cell_death/TP53_pathway")), 1]))
+  
+} else if (selected_hallmark == 8){
+  hallmark = "Enabling replicative immortality"
+  hallmark_genes = unique(as.character(cancer_genes[which(cancer_genes$Main_hallmark_feature %in% c("enabling_replicative_immortality", "enabling_replicative_immortality/telomerase_activity", "enabling_replicative_immortality/senescence_secretome")), 1]))
+  
+}
+
+# ==== Survival analysis per main cancer hallmarks ====
+for (a in 1:length(exp_files)){
+  expression = read.table(exp_files[a], header = T, sep = "\t", check.names = F, row.names = 1)
+  
+  tumor_type = strsplit(exp_files[a], split = "[/,_]")
+  tumor_type = sapply(tumor_type, "[[", 9)
+  
+  cases = intersect(colnames(expression), rownames(clinical))
+  expression = expression[, cases]
+  clintable = clinical[cases, ]
+  
+  # Survival data
+  surv_time = as.numeric(clintable[[3]]) # OS = column 3; RFS = column 5
+  surv_events = as.numeric(clintable[[4]]) # OS = column 4; RFS = column 6
+  
+  # Computing hallmark signature
+  expression_sign = expression[hallmark_genes, ]
+  hm_signature = colMeans(expression_sign, na.rm = T)
+  
+  # Selecting the best cutoff to dividing patients into high and low expression groups:
+  cutoff.point = as.numeric(bestcutoff(datavector = hm_signature, clintable = clintable))
+  
+  # Dividing patients into low and high expression groups:
+  exp_category = c()
+  
+  for (c in 1:length(hm_signature)){
+    
+    if (hm_signature[[c]] >= cutoff.point[1]){
+      
+      exp_category[[c]] = "High"
+      
+    } else {
+      
+      exp_category[[c]] = "Low"
+      
+    }
+    
+  }
+  
+  exp_category = factor(exp_category, levels = c("Low", "High"))
+  
+  # Cox-regression
+  cox_result = coxph(Surv(surv_time, surv_events) ~ as.factor(exp_category))
+  
+  forest_input[a, 1] = tumor_type
+  forest_input[a, 2] = as.numeric(summary(cox_result)$sctest['pvalue'])
+  forest_input[a, 3] = as.numeric(round(summary(cox_result)$conf.int[1], digits = 2))
+  forest_input[a, 4] = as.numeric(round(summary(cox_result)$conf.int[3], digits = 2))
+  forest_input[a, 5] = as.numeric(round(summary(cox_result)$conf.int[4], digits = 2))
+  
+  # Multivariate Cox-regression (gender, race, stage, grade and age)
+  original_clincols = colnames(clintable)
+  colnames(clintable) = make.names(colnames(clintable))
+  clin_names = make.names(c("Stage", "Gender(0=female;1=male)", "Race(1=white;2=asian;3=black/african american)", "Grade(0(LowGrade)=G1+G2;1(HighGrade)=G3+G4)", "Age"))
+  
+  clin_names_allna = sapply(clintable[, clin_names], function(x) !all(is.na(x)))
+  clin_names_nona = names(clin_names_allna[clin_names_allna == T])
+  
+  fmla = as.formula(paste("Surv(surv_time, surv_events) ~ as.factor(exp_category) + ", paste0(clin_names_nona, collapse= " + ")))
+  multi_cox_result = coxph(fmla, data = clintable)
+  
+  multi_cox[a, 1] = tumor_type
+  multi_cox[a, 2] = as.numeric(summary(multi_cox_result)$sctest['pvalue'])
+  multi_cox[a, 3] = as.numeric(round(summary(multi_cox_result)$conf.int[1, 1], digits = 2))
+  
+  # colnames(clintable) = original_clincols
+  
+  # pdf(file = paste(tumor_type, paste(hallmark, ".pdf", sep = ""), sep = "_"))
+  # survplot(Surv(surv_time, surv_events) ~ exp_category, xlab = 'Time (months)', ylab = 'Probability', stitle = 'Expression', cex.main=1.2, cex.lab=1.2, cex.axis = 1.2, col = c("black", "red"), mark.time = T)
+  # dev.off()
+  
+}
+
+# forest_input_sorted = forest_input[order(forest_input$p.value), ]
+# forest_input_sorted$p.value = format(forest_input_sorted$p.value, digits = 2, scientific = T)
+
+write.table(multi_cox, paste(hallmark, "multivariate_results.txt", sep = "_"), sep = "\t", col.names = NA, na = "")
+
+# ==== Survival analysis for tumor mutation burden ====
+tumor_type = strsplit(exp_files, split = "[/,_]")
+tumor_type = sapply(tumor_type, "[[", 9)
+
+for (a in 1:length(tumor_type)){
+  
+  clinical_tumor = clinical[clinical$Project_ID == tumor_type[a], ]
+  
+  mut_burd = clinical_tumor[!is.na(clinical_tumor$Total_Number_Of_Mutation), ]
+  mut_burd_values = as.numeric(mut_burd$Total_Number_Of_Mutation)
+  
+  # Survival data
+  surv_time = as.numeric(mut_burd[[3]]) # OS = column 3; RFS = column 5
+  surv_events = as.numeric(mut_burd[[4]]) # OS = column 4; RFS = column 6
+  
+  # Selecting the best cutoff to dividing patients into high and low expression groups:
+  cutoff.point = as.numeric(bestcutoff(datavector = mut_burd_values, clintable = mut_burd))
+  
+  # Dividing patients into low and high expression groups:
+  exp_category = c()
+  
+  for (c in 1:length(mut_burd_values)){
+    if (mut_burd_values[[c]] >= cutoff.point[1]){
+      exp_category[[c]] = "High"
+    } else {
+      exp_category[[c]] = "Low"
+    }
+  }
+  
+  exp_category = factor(exp_category, levels = c("Low", "High"))
+  
+  # Cox-regression
+  cox_result = coxph(Surv(surv_time, surv_events) ~ as.factor(exp_category))
+  
+  forest_input[a, 1] = tumor_type[a]
+  forest_input[a, 2] = as.numeric(summary(cox_result)$sctest['pvalue'])
+  forest_input[a, 3] = as.numeric(round(summary(cox_result)$conf.int[1], digits = 2))
+  forest_input[a, 4] = as.numeric(round(summary(cox_result)$conf.int[3], digits = 2))
+  forest_input[a, 5] = as.numeric(round(summary(cox_result)$conf.int[4], digits = 2))
+  
+  # pdf(file = paste(tumor_type, paste(hallmark, ".pdf", sep = ""), sep = "_"))
+  # survplot(Surv(surv_time, surv_events) ~ exp_category, xlab = 'Time (months)', ylab = 'Probability', stitle = 'Expression', cex.main=1.2, cex.lab=1.2, cex.axis = 1.2, col = c("black", "red"), mark.time = T)
+  # dev.off()
+  
+}
+
+forest_input_sorted = forest_input[order(forest_input$p.value), ]
+forest_input_sorted$p.value = format(forest_input_sorted$p.value, digits = 2, scientific = T)
+
+# ==== Creating FOREST PLOT ====
+header = as.data.frame(matrix(nrow = 1, ncol = 3))
+header[[1]] = "Tumor"
+header[[2]] = "HR (CI)"
+header[[3]] = "p-values"
+colnames(header) = c("Tumor", "HR (CI)", "p-values")
+
+text = as.data.frame(matrix(nrow = 26, ncol = 3))
+colnames(text) = c("Tumor", "HR (CI)", "p-values")
+
+text[[1]] = forest_input_sorted$Tumor
+text[[2]] = paste(forest_input_sorted$HR, paste("(", forest_input_sorted$CI_Low, "-", forest_input_sorted$CI_High, ")", sep = ""), sep = " ")
+text[[3]] = forest_input_sorted$p.value
+
+plot_supp_info = rbind(header, text)
+plot_supp_info = as.matrix(plot_supp_info)
+
+plot_data = forest_input_sorted[, -1:-2]
+colnames(plot_data) = c("HR", "CI-low", "CI-high")
+header2 = as.data.frame(matrix(nrow = 1, ncol = 3))
+colnames(header2) = c("HR", "CI-low", "CI-high")
+
+plot_input_data = rbind(header2, plot_data)
+
+pdf("TMB_plot.pdf")
+forestplot(plot_supp_info,
+           plot_input_data,
+           # title = hallmark,
+           title = "Tumor mutation burden",
+           hrzl_lines = list("2" = gpar(lty = 1)),
+           # is.summary = c(T,F,rep(F,8),F),
+           clip = c(0, 4.5),
+           new_page = F,
+           zero = 1,
+           lwd.zero = 0.8,
+           xlog = F,
+           graph.pos = 2,
+           xlab= "HR-values",
+           colgap = unit(1, "cm"),
+           col = fpColors(box="black", lines="black", zero = "gray50"),
+           cex = 0.9,
+           lineheight = "auto",
+           boxsize = 0.25,
+           lwd.ci = 2, 
+           ci.vertices = TRUE, 
+           ci.vertices.height = 0.1,
+           fn.ci_norm = "fpDrawNormalCI",
+           txt_gp = fpTxtGp(cex = 0.8, ticks = gpar(fontfamily = "", cex = 0.9), xlab  = gpar(fontfamily = "", cex = 1))) 
+dev.off()
