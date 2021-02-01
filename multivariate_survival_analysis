@@ -1,0 +1,151 @@
+# Required PACKAGES
+library(survival)
+library(ggplot2)
+
+# ==== SURVIVAL FUNCTION ====
+bestcutoff <- function(datavector, clintable) {
+  breaks <- quantile(datavector, probs = seq(0.25, 0.75, by= 0.01))
+  cutoff.table <- t(sapply(breaks, function(z) cutoff(datavector = datavector, cutpoint = z, clintable = clintable)))
+  colnames(cutoff.table) <- c("cutoff", "pvalue")
+  #cutoff.table
+  cutoff.table[order(cutoff.table[, 2]), "cutoff"][1]
+}
+
+cutoff <- function(datavector, cutpoint, clintable) {
+  term <- cut(x = datavector, breaks = c(min(datavector), cutpoint, max(datavector)), labels = F, include.lowest = T)
+  cox <- summary(coxph(Surv(surv_time, surv_events) ~ term, data = clintable))
+  c(cutpoint, cox$sctest[3])
+}
+
+exp_files = list.files(path = getwd(), pattern = "mRNA_scaled_expression.txt", full.names = T, recursive = T)
+clin_file = list.files(path = getwd(), pattern = "PanCancer_clinical_table_all190708.txt", full.names = T, recursive = T)
+cancer_genes_file = list.files(path = getwd(), pattern = "Univariate_sign_39genes.txt", full.names = T, recursive = T)
+
+cancer_genes = read.table(cancer_genes_file, sep = "\t",  header = T, check.names = F)
+clinical = read.table(clin_file, sep = "\t", header = T, row.names = 1, check.names = F)
+
+multivariate_surv_analysis = as.data.frame(matrix(nrow = 39, ncol = 13))
+
+a = 1 # Selecting the tumors 1-26
+expression = read.table(exp_files[a], header = T, sep = "\t", check.names = F, row.names = 1)
+
+tumor_type = strsplit(exp_files[a], split = "[/,_]")
+tumor_type = sapply(tumor_type, "[[", 9)
+
+cases = intersect(colnames(expression), rownames(clinical))
+expression = expression[, cases]
+clintable = clinical[cases, ]
+
+surv_time = as.numeric(clintable[[3]]) # OS = column 3; RFS = column 5
+surv_events = as.numeric(clintable[[4]]) # OS = column 4; RFS = column 6
+
+for (b in 1:nrow(cancer_genes)){
+  tryCatch(
+    expr = {
+      # Selecting genes
+      selected_exp = as.numeric(expression[as.character(cancer_genes[b, 1]), ])
+      
+      # Selecting the best cutoff to dividing patients into high and low expression groups:
+      cutoff.point = as.numeric(bestcutoff(datavector = selected_exp, clintable = clintable))
+      
+      # Dividing patients into low and high expression groups:
+      exp_category = c()
+      
+      for (c in 1:length(selected_exp)){
+        
+        if (selected_exp[[c]] >= cutoff.point[1]){
+          
+          exp_category[[c]] = "High"
+          
+        } else {
+          
+          exp_category[[c]] = "Low"
+          
+        }
+        
+      }
+      
+      exp_category = factor(exp_category, levels = c("Low", "High"))
+      
+      # Cox-regression
+      multivariate_cox_result = summary(coxph(Surv(surv_time, surv_events) ~ exp_category
+                                              + clintable$`Gender(0=female;1=male)`
+                                              + clintable$`Race(1=white;2=asian;3=black/african american)`
+                                              + clintable$Age
+                                              + clintable$Stage
+                                              + clintable$`Grade(0(LowGrade)=G1+G2;1(HighGrade)=G3+G4)`
+      ))
+      
+      # Result tables of multivariate analysis
+      # Gene P values
+      multivariate_surv_analysis[b, 2] = as.numeric(round(multivariate_cox_result$coefficients[, 5]["exp_categoryHigh"], digits = 4))
+      n_patients = length(selected_exp)
+      colnames(multivariate_surv_analysis)[2] = paste(tumor_type, paste("N=", n_patients, sep = ""), "Gene-Pvalue", sep = "_")
+      
+      # Gene HR values
+      multivariate_surv_analysis[b, 3] = as.numeric(round(multivariate_cox_result$conf.int["exp_categoryHigh", 1], digits = 2))
+      colnames(multivariate_surv_analysis)[3] = paste(tumor_type, "Gene-HR", sep = "_")
+      
+      # Gender P values
+      multivariate_surv_analysis[b, 4] = as.numeric(multivariate_cox_result$coefficients[, 5]["clintable$`Gender(0=female;1=male)`"])
+      n_patients = length(na.omit(clintable$`Gender(0=female;1=male)`))
+      colnames(multivariate_surv_analysis)[4] = paste(tumor_type, paste("N=", n_patients, sep = ""), "Gender-Pvalue", sep = "_")
+      
+      # Gender HR values
+      multivariate_surv_analysis[b, 5] = as.numeric(round(multivariate_cox_result$conf.int["clintable$`Gender(0=female;1=male)`", 1], digits = 2))
+      colnames(multivariate_surv_analysis)[5] = paste(tumor_type, "Gender-HR", sep = "_")
+      
+      # Race P values
+      multivariate_surv_analysis[b, 6] = as.numeric(multivariate_cox_result$coefficients[, 5]["clintable$`Race(1=white;2=asian;3=black/african american)`"])
+      n_patients = length(na.omit(clintable$`Race(1=white;2=asian;3=black/african american)`))
+      colnames(multivariate_surv_analysis)[6] = paste(tumor_type, paste("N=", n_patients, sep = ""), "Race-Pvalue", sep = "_")
+      
+      # Race HR values
+      multivariate_surv_analysis[b, 7] = as.numeric(round(multivariate_cox_result$conf.int["clintable$`Race(1=white;2=asian;3=black/african american)`", 1], digits = 2))
+      colnames(multivariate_surv_analysis)[7] = paste(tumor_type, "Race-HR", sep = "_")
+      
+      # Age P values
+      multivariate_surv_analysis[b, 8] = as.numeric(multivariate_cox_result$coefficients[, 5]["clintable$Age"])
+      n_patients = length(na.omit(clintable$Age))
+      colnames(multivariate_surv_analysis)[8] = paste(tumor_type, paste("N=", n_patients, sep = ""), "Age-Pvalue", sep = "_")
+      
+      # Age HR values
+      multivariate_surv_analysis[b, 9] = as.numeric(round(multivariate_cox_result$conf.int["clintable$Age", 1], digits = 2))
+      colnames(multivariate_surv_analysis)[9] = paste(tumor_type, "Age-HR", sep = "_")
+      
+      # Stage P values
+      multivariate_surv_analysis[b, 10] = as.numeric(multivariate_cox_result$coefficients[, 5]["clintable$Stage"])
+      n_patients = length(na.omit(clintable$Stage))
+      colnames(multivariate_surv_analysis)[10] = paste(tumor_type, paste("N=", n_patients, sep = ""), "Stage-Pvalue", sep = "_")
+      
+      # Stage HR values
+      multivariate_surv_analysis[b, 11] = as.numeric(round(multivariate_cox_result$conf.int["clintable$Stage", 1], digits = 2))
+      colnames(multivariate_surv_analysis)[11] = paste(tumor_type, "Stage-HR", sep = "_")
+      
+      # Grade P values
+      multivariate_surv_analysis[b, 12] = as.numeric(multivariate_cox_result$coefficients[, 5]["clintable$`Grade(0(LowGrade)=G1+G2;1(HighGrade)=G3+G4)`"])
+      n_patients = length(na.omit(clintable$`Grade(0(LowGrade)=G1+G2;1(HighGrade)=G3+G4)`))
+      colnames(multivariate_surv_analysis)[12] = paste(tumor_type, paste("N=", n_patients, sep = ""), "Grade-Pvalue", sep = "_")
+      
+      # Grade HR values
+      multivariate_surv_analysis[b, 13] = as.numeric(round(multivariate_cox_result$conf.int["clintable$`Grade(0(LowGrade)=G1+G2;1(HighGrade)=G3+G4)`", 1], digits = 2))
+      colnames(multivariate_surv_analysis)[13] = paste(tumor_type, "Grade-HR", sep = "_")
+      
+    },
+    
+    error = function(e){
+      e = toString(unlist(e))
+      error_line = data.frame(b, e, Sys.time(), stringsAsFactors = F)
+      # write.table(error_line, paste("/home/adam/Documents/TCGA_PanCancer/Error_Warnings/", paste(tumor_type, "error_pancancer.txt", sep = "_"), sep = ""), append = T, sep = "\t", quote = F, row.names = F, col.names = F)
+    }
+    
+    # warning = function(w){
+    # w = toString(unlist(w))
+    # warning_line = data.frame(b, w, Sys.time(), stringsAsFactors = F)
+    # # write.table(warning_line, paste("/home/adam/Documents/TCGA_PanCancer/Error_Warnings/", paste(tumor_type, "warning_pancancer.txt", sep = "_"), sep = ""), append = T, sep = "\t", quote = F, row.names = F, col.names = F)
+    # }
+  )
+}
+
+multivariate_surv_analysis[[1]] = as.character(cancer_genes[[1]])
+write.table(multivariate_surv_analysis, paste(paste("PanCancer_hallmarkgenes_OS_multivariate_survival", tumor_type, sep = "_"), ".txt", sep = ""), sep = "\t", quote = F, na = "", col.names = NA)
