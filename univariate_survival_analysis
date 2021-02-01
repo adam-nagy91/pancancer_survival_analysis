@@ -1,0 +1,141 @@
+# Required PACKAGES
+library(survival)
+library(beeswarm)
+library(ggplot2)
+
+# ==== SURVIVAL FUNCTION ====
+bestcutoff <- function(datavector, clintable) {
+  breaks <- quantile(datavector, probs = seq(0.25, 0.75, by= 0.01))
+  cutoff.table <- t(sapply(breaks, function(z) cutoff(datavector = datavector, cutpoint = z, clintable = clintable)))
+  colnames(cutoff.table) <- c("cutoff", "pvalue")
+  #cutoff.table
+  cutoff.table[order(cutoff.table[, 2]), "cutoff"][1]
+}
+
+cutoff <- function(datavector, cutpoint, clintable) {
+  term <- cut(x = datavector, breaks = c(min(datavector), cutpoint, max(datavector)), labels = F, include.lowest = T)
+  cox <- summary(coxph(Surv(surv_time, surv_events) ~ term, data = clintable))
+  c(cutpoint, cox$sctest[3])
+}
+
+exp_files = list.files(path = getwd(), pattern = "mRNA_scaled_expression.txt", full.names = T, recursive = T)
+clin_file = list.files(path = getwd(), pattern = "PanCancer_clinical_table_all190708.txt", full.names = T, recursive = T)
+cancer_genes_file = list.files(path = getwd(), pattern = "Candidate_genes.txt", full.names = T, recursive = T)
+
+cancer_genes = read.table(cancer_genes_file, sep = "\t",  header = T, check.names = F)
+clinical = read.table(clin_file, sep = "\t", header = T, row.names = 1, check.names = F)
+
+surv_analysis = as.data.frame(matrix(nrow = 1051, ncol = 107))
+
+for (a in 1:length(exp_files)){
+  expression = read.table(exp_files[a], header = T, sep = "\t", check.names = F, row.names = 1)
+  
+  tumor_type = strsplit(exp_files[a], split = "[/,_]")
+  tumor_type = sapply(tumor_type, "[[", 9)
+  
+  cases = intersect(colnames(expression), rownames(clinical))
+  expression = expression[, cases]
+  clintable = clinical[cases, ]
+  
+  surv_time = as.numeric(clintable[[3]]) # OS = column 3; RFS = column 5
+  surv_events = as.numeric(clintable[[4]]) # OS = column 4; RFS = column 6
+  
+  for (b in 1:nrow(cancer_genes)){
+    tryCatch(
+      expr = {
+        # ==== Selecting genes ====
+        selected_exp = as.numeric(expression[as.character(cancer_genes[b, 1]), ])
+        
+        # selected_exp = as.numeric(expression["BAX", ])
+        
+        # ==== Selecting the best cutoff to dividing patients into high and low expression groups: ==== 
+        cutoff.point = as.numeric(bestcutoff(datavector = selected_exp, clintable = clintable))
+        
+        # ==== Dividing patients into low and high expression groups: ==== 
+        exp_category = c()
+        
+        for (c in 1:length(selected_exp)){
+          
+          if (selected_exp[[c]] >= cutoff.point[1]){
+            
+            exp_category[[c]] = "High"
+            
+          } else {
+            
+            exp_category[[c]] = "Low"
+            
+          }
+          
+        }
+        
+        exp_category = factor(exp_category, levels = c("Low", "High"))
+        
+        # ==== Cox-regression ==== 
+        cox_result = coxph(Surv(surv_time, surv_events) ~ as.factor(exp_category))
+        
+        # Result tables of univariate analysis
+        surv_analysis[b, a*4] = as.numeric(summary(cox_result)$sctest['pvalue'])
+        colnames(surv_analysis)[a*4] = paste(tumor_type, "pvalue", sep = "_")
+        
+        surv_analysis[b, a*4+1] = as.numeric(round(summary(cox_result)$conf.int[1], digits = 2))
+        colnames(surv_analysis)[a*4+1] = paste(tumor_type, "HR", sep = "_")
+        
+        surv_analysis[b, a*4+2] = as.numeric(round(summary(cox_result)$conf.int[3], digits = 2))
+        colnames(surv_analysis)[a*4+2] = paste(tumor_type, "CI_low", sep = "_")
+        
+        surv_analysis[b, a*4+3] = as.numeric(round(summary(cox_result)$conf.int[4], digits = 2))
+        colnames(surv_analysis)[a*4+3] = paste(tumor_type, "CI_high", sep = "_")
+        
+        # ==== Plot expression (Beeswarm plot)==== 
+        exp_category_bee = cut(selected_exp, breaks = quantile(selected_exp, c(0, 0.25, 0.75, 1)), labels = c("low", "mid", "low"), include.lowest = T)
+        
+        ggplot(mapping = aes(x="BAX", y = selected_exp, colour = exp_category_bee)) +
+          geom_jitter(width = 0.5, show.legend = F, size = 3) +
+          scale_color_manual(values=c("#999999", "black")) +
+          labs(y = "Expression", title = "BAX") +
+          theme_bw() +
+          theme(axis.title.x = element_blank(),
+                axis.line = element_line(colour = "black"),
+                plot.title = element_text(size = 20, hjust = 0.5))
+        
+      },
+      
+      error = function(e){
+        e = toString(unlist(e))
+        error_line = data.frame(b, e, Sys.time(), stringsAsFactors = F)
+        # write.table(error_line, paste("/home/adam/Documents/TCGA_PanCancer/Error_Warnings/", paste(tumor_type, "error_pancancer.txt", sep = "_"), sep = ""), append = T, sep = "\t", quote = F, row.names = F, col.names = F)
+      }
+      
+      # warning = function(w){
+      # w = toString(unlist(w))
+      # warning_line = data.frame(b, w, Sys.time(), stringsAsFactors = F)
+      # # write.table(warning_line, paste("/home/adam/Documents/TCGA_PanCancer/Error_Warnings/", paste(tumor_type, "warning_pancancer.txt", sep = "_"), sep = ""), append = T, sep = "\t", quote = F, row.names = F, col.names = F)
+      # }
+    )
+  }
+  
+  print(tumor_type) 
+  
+}
+
+surv_analysis[[1]] = as.character(cancer_genes[[1]])
+surv_analysis[[2]] = as.character(cancer_genes[[2]])
+surv_analysis[[3]] = as.character(cancer_genes[[3]])
+
+setwd("~/Documents/TCGA_PanCancer/Statistics")
+write.table(surv_analysis, "PanCancer_hallmarkgenes_OS_survival_results.txt", sep = "\t", quote = F, na = "", col.names = NA)
+
+#############################
+# MULTIPLE TESTING CORRECTION
+#############################
+pancancer_results = read.table("PanCancer_survival_results.txt", header = T, sep = "\t", row.names = 1, stringsAsFactors = F, check.names = F)
+mtc_results = as.data.frame(matrix(nrow = 25228, ncol = 26))
+rownames(mtc_results) = rownames(pancancer_results)
+
+for (i in 1:ncol(mtc_results)){
+  
+  mtc_results[, i] = p.adjust(as.numeric(pancancer_results[[i*2]]), method = "fdr")
+  colnames(mtc_results)[i] = paste(colnames(pancancer_results)[i*2], "corrected_pvalue", sep = "_")
+}
+
+write.table(mtc_results, "PanCancer_survival_fdr_results.txt", sep = "\t", quote = F, na = "", col.names = NA)
