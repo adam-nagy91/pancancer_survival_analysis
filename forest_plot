@@ -27,7 +27,10 @@ exp_files = list.files(path = getwd(), pattern = "mRNA_scaled_expression.txt", f
 clin_file = list.files(path = getwd(), pattern = "PanCancer_clinical_table_all190708.txt", full.names = T, recursive = T)
 cancer_genes_file = list.files(path = getwd(), pattern = "BBA_surv_genes.txt", full.names = T, recursive = T)
 
+# Reading the cancer hallmark gene list (707 unique gene)
 cancer_genes = read.table(cancer_genes_file, sep = "\t",  header = T, check.names = F)
+
+# Reading clinical table
 clinical = read.table(clin_file, sep = "\t", header = T, row.names = 1, check.names = F)
 
 # ==== The list of the main cancer hallmarks ====
@@ -126,7 +129,7 @@ for (a in 1:length(exp_files)){
   forest_input[a, 4] = as.numeric(round(summary(cox_result)$conf.int[3], digits = 2))
   forest_input[a, 5] = as.numeric(round(summary(cox_result)$conf.int[4], digits = 2))
   
-  # Multivariate Cox-regression (gender, race, stage, grade and age)
+  # Multivariate Cox-regression (including gender, race, stage, grade and age)
   original_clincols = colnames(clintable)
   colnames(clintable) = make.names(colnames(clintable))
   clin_names = make.names(c("Stage", "Gender(0=female;1=male)", "Race(1=white;2=asian;3=black/african american)", "Grade(0(LowGrade)=G1+G2;1(HighGrade)=G3+G4)", "Age"))
