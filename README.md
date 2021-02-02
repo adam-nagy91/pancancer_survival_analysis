@@ -1,4 +1,4 @@
-# pancancer_analysis
+# pancancer_survival_analysis
 
 1. clinical_data_processing.R list and read the clinical data files from the directory and perform the standardization of the data
 2. mRNAseq_data processing.R list and read the htseq counts data files from the directory and perform the normalization by DESeq
