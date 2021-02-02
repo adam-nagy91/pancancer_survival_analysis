@@ -13,4 +13,4 @@ https://doi.org/10.1101/2020.11.13.381442
 
 # Contact
 If you have further question, please contact us via:
-nagy.adam1@ned.semmelweis-univ.hu
+nagy.adam1@med.semmelweis-univ.hu
