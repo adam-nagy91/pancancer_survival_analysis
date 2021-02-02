@@ -18,16 +18,21 @@ cutoff <- function(datavector, cutpoint, clintable) {
   c(cutpoint, cox$sctest[3])
 }
 
+# List files
 exp_files = list.files(path = getwd(), pattern = "mRNA_scaled_expression.txt", full.names = T, recursive = T)
 clin_file = list.files(path = getwd(), pattern = "PanCancer_clinical_table_all190708.txt", full.names = T, recursive = T)
 cancer_genes_file = list.files(path = getwd(), pattern = "Candidate_genes.txt", full.names = T, recursive = T)
 
+# Reading cancer hallmark genes (707 unique genes)
 cancer_genes = read.table(cancer_genes_file, sep = "\t",  header = T, check.names = F)
+
+# Reading clinical table
 clinical = read.table(clin_file, sep = "\t", header = T, row.names = 1, check.names = F)
 
 surv_analysis = as.data.frame(matrix(nrow = 1051, ncol = 107))
 
 for (a in 1:length(exp_files)){
+  # Reading expression table
   expression = read.table(exp_files[a], header = T, sep = "\t", check.names = F, row.names = 1)
   
   tumor_type = strsplit(exp_files[a], split = "[/,_]")
