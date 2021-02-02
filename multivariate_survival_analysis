@@ -17,16 +17,22 @@ cutoff <- function(datavector, cutpoint, clintable) {
   c(cutpoint, cox$sctest[3])
 }
 
+# List files
 exp_files = list.files(path = getwd(), pattern = "mRNA_scaled_expression.txt", full.names = T, recursive = T)
 clin_file = list.files(path = getwd(), pattern = "PanCancer_clinical_table_all190708.txt", full.names = T, recursive = T)
 cancer_genes_file = list.files(path = getwd(), pattern = "Univariate_sign_39genes.txt", full.names = T, recursive = T)
 
+# Reading cancer hallmark gene list (707 unique gene)
 cancer_genes = read.table(cancer_genes_file, sep = "\t",  header = T, check.names = F)
+
+# Reading clinical table
 clinical = read.table(clin_file, sep = "\t", header = T, row.names = 1, check.names = F)
 
 multivariate_surv_analysis = as.data.frame(matrix(nrow = 39, ncol = 13))
 
 a = 1 # Selecting the tumors 1-26
+
+# Reading expression table
 expression = read.table(exp_files[a], header = T, sep = "\t", check.names = F, row.names = 1)
 
 tumor_type = strsplit(exp_files[a], split = "[/,_]")
@@ -76,7 +82,7 @@ for (b in 1:nrow(cancer_genes)){
                                               + clintable$`Grade(0(LowGrade)=G1+G2;1(HighGrade)=G3+G4)`
       ))
       
-      # Result tables of multivariate analysis
+      # Result table of multivariate analysis
       # Gene P values
       multivariate_surv_analysis[b, 2] = as.numeric(round(multivariate_cox_result$coefficients[, 5]["exp_categoryHigh"], digits = 4))
       n_patients = length(selected_exp)
